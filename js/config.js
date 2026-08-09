@@ -4,7 +4,7 @@
  */
 
 const APP_CONFIG = {
-  appName: "App Maker",
+  appName: "App Maker App",
   version: "1.0.0",
 
   // Repository defaults (Can be overridden in UI settings)
