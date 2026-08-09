@@ -1,0 +1,37 @@
+{
+  "uid": 1,
+  "secretKey": "8449cff0133f09e65aea1e07c18e64a05d9b8deb367e155ddffbfbfdd555c499",
+  "apps": [
+    {
+      "aid": 1,
+      "uid": 1,
+      "appName": "Student Registration System",
+      "category": "Education",
+      "description": "The app will be used for student registration for grade k-12 in schools. The app needs the student name, student date of birth, student's parent's name, student's parent's phone number, student's parent's email. And then the student will be registered into the data\\students.json in the project directory.",
+      "createdAt": "2026-08-09T02:44:49.655Z",
+      "aotObjects": [],
+      "canvasLayout": []
+    },
+    {
+      "aid": 1,
+      "uid": 1,
+      "appName": "Learning Management System",
+      "category": "Education",
+      "description": "This will be used for the students so that they can do self-learn and also they can do teacher led learning together like the students first practice the lession at home and then understand better at school.",
+      "createdAt": "2026-08-09T03:28:08.553Z",
+      "aotObjects": [],
+      "canvasLayout": []
+    },
+    {
+      "aid": 1,
+      "uid": 1,
+      "appName": "Learning Management System (Renewed)",
+      "category": "Education",
+      "description": "This app is made for teachers and students so that students can do self-study and ask the teacher for unclear things and teachers can mark attendence and the things like that on this app and the student will only come to school for clarifying the topics.",
+      "createdAt": "2026-08-09T03:30:32.767Z",
+      "aotObjects": [],
+      "canvasLayout": []
+    }
+  ],
+  "nextAidCounter": 2
+}
