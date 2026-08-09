@@ -4,14 +4,9 @@
  */
 
 const AppAuth = {
-  // Algorithm configuration
   ALGORITHM: 'AES-GCM',
   KEY_LENGTH: 256,
 
-  /**
-   * Generates a random 256-bit cryptographic key for a user.
-   * Returns both the CryptoKey object and its hexadecimal string format.
-   */
   async generateUserKey() {
     const key = await window.crypto.subtle.generateKey(
       {
@@ -29,9 +24,6 @@ const AppAuth = {
     return { key, keyString };
   },
 
-  /**
-   * Rebuilds a CryptoKey object from a saved hexadecimal key string.
-   */
   async importUserKey(keyString) {
     const match = keyString.match(/.{1,2}/g);
     if (!match) {
@@ -49,15 +41,11 @@ const AppAuth = {
     );
   },
 
-  /**
-   * Encrypts plain text or a JSON object using AES-GCM encryption.
-   */
   async encryptData(data, key) {
     const encoder = new TextEncoder();
     const stringData = typeof data === 'string' ? data : JSON.stringify(data);
     const encodedData = encoder.encode(stringData);
 
-    // Random initialization vector (12 bytes for AES-GCM)
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
     const encryptedBuffer = await window.crypto.subtle.encrypt(
@@ -81,9 +69,6 @@ const AppAuth = {
     };
   },
 
-  /**
-   * Decrypts encrypted text using the user's secret key.
-   */
   async decryptData(ciphertext, ivString, key) {
     const cipherMatch = ciphertext.match(/.{1,2}/g);
     const ivMatch = ivString.match(/.{1,2}/g);
@@ -114,9 +99,6 @@ const AppAuth = {
     }
   },
 
-  /**
-   * Generates a new user identity object with UID and secret key.
-   */
   async createNewUserIdentity(assignedUid) {
     const { key, keyString } = await this.generateUserKey();
 
