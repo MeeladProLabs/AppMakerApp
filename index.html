@@ -210,7 +210,7 @@
         loginUidInput.value = urlUid;
       }
 
-      // Check if session is already saved in LocalStorage
+      // Restore session if available
       const activeSessionRaw = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
       if (activeSessionRaw) {
         const parsed = JSON.parse(activeSessionRaw);
@@ -235,11 +235,9 @@
           return;
         }
 
-        // 1. Check local storage for session
         let foundSession = localStorage.getItem(`${APP_CONFIG.storageKeys.userSession}_${inputUid}`);
         let userObj = foundSession ? JSON.parse(foundSession) : null;
 
-        // 2. Fetch from GitHub repository if not cached locally
         if (!userObj) {
           const remoteUser = await DataManager.getGitHubFile(`${APP_CONFIG.paths.usersFolder}user_${inputUid}.json`);
           if (remoteUser.exists && remoteUser.data) {
@@ -247,7 +245,6 @@
           }
         }
 
-        // 3. Verify Secret Key Credentials
         if (userObj && userObj.secretKey === inputKey) {
           currentSession = userObj;
           saveSession(currentSession);
@@ -277,6 +274,9 @@
 
         saveSession(currentSession);
 
+        // Strip any stale aid parameter from URL
+        DataManager.updateUrlParams(assignedUid, null);
+
         // Commit profile to GitHub
         await DataManager.commitGitHubFile(
           `${APP_CONFIG.paths.usersFolder}user_${assignedUid}.json`,
@@ -284,7 +284,6 @@
           `Create new user profile #${assignedUid}`
         );
 
-        // Update registry
         registry.counters.next_uid = assignedUid + 1;
         await DataManager.commitGitHubFile(
           APP_CONFIG.paths.indexRegistry,
@@ -330,7 +329,6 @@
         const params = DataManager.getUrlParams();
         const aid = params.aid ? parseInt(params.aid, 10) : null;
 
-        DataManager.updateUrlParams(currentSession.uid, aid);
         displayUid.value = `#${currentSession.uid}`;
         displaySecretKey.value = currentSession.secretKey;
 
@@ -425,6 +423,7 @@
         }
       });
 
+      // Clears bad AID from URL and returns directly to dashboard
       document.getElementById('returnDashboardBtn').addEventListener('click', () => {
         if (currentSession) {
           DataManager.updateUrlParams(currentSession.uid, null);
