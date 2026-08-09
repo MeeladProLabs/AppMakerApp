@@ -13,8 +13,11 @@
     <div class="logo-area" style="cursor: pointer;" id="homeLogoBtn">
       <h1>🚀 App Maker</h1>
     </div>
-    <div class="user-badge" id="userBadge">
-      Checking User Session...
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      <button class="btn btn-secondary" id="openSettingsBtn" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">⚙️ GitHub Sync</button>
+      <div class="user-badge" id="userBadge">
+        Checking User Session...
+      </div>
     </div>
   </header>
 
@@ -49,6 +52,37 @@
 
   </main>
 
+  <!-- GitHub Settings Modal -->
+  <div class="modal-overlay hidden" id="settingsModal">
+    <div class="modal-content">
+      <h2>⚙️ GitHub Sync Settings</h2>
+      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
+        Provide your GitHub Personal Access Token (PAT) with repo permissions to write user files and app blueprints directly to your repository.
+      </p>
+      <form id="settingsForm">
+        <div class="form-group">
+          <label for="githubOwnerInput">GitHub Username / Owner</label>
+          <input type="text" id="githubOwnerInput" placeholder="e.g. meeladprolabs" required>
+        </div>
+
+        <div class="form-group">
+          <label for="githubRepoInput">Repository Name</label>
+          <input type="text" id="githubRepoInput" placeholder="e.g. AppMakerApp" required>
+        </div>
+
+        <div class="form-group">
+          <label for="githubTokenInput">Personal Access Token (PAT)</label>
+          <input type="password" id="githubTokenInput" placeholder="github_pat_11A..." required>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="closeSettingsBtn">Cancel</button>
+          <button type="submit" class="btn">Save & Test Connection</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Create App Modal Popup -->
   <div class="modal-overlay hidden" id="createAppModal">
     <div class="modal-content">
@@ -78,7 +112,7 @@
 
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" id="closeCreateAppBtn">Cancel</button>
-          <button type="submit" class="btn">Create App</button>
+          <button type="submit" class="btn" id="submitCreateAppBtn">Create & Commit App</button>
         </div>
       </form>
     </div>
@@ -89,7 +123,7 @@
     <div class="modal-content">
       <h2 style="color: var(--success);">🔑 Account Password Credentials</h2>
       <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
-        Your account has been initialized. Below is your assigned <strong>User ID</strong> and auto-generated <strong>Secret Key (Password)</strong>. Store it safely to access your account in the future.
+        Your account has been initialized. Below is your assigned <strong>User ID</strong> and auto-generated <strong>Secret Key (Password)</strong>.
       </p>
 
       <div class="form-group">
@@ -139,9 +173,19 @@
         localStorage.setItem(`${APP_CONFIG.storageKeys.userSession}_${session.uid}`, JSON.stringify(session));
       }
 
-      currentSession = loadSession(requestedUid);
+      // Check if user profile file exists on GitHub
+      if (requestedUid !== null && !isNaN(requestedUid)) {
+        const remoteUser = await DataManager.getGitHubFile(`${APP_CONFIG.paths.usersFolder}user_${requestedUid}.json`);
+        if (remoteUser.exists && remoteUser.data) {
+          currentSession = remoteUser.data;
+          saveSession(currentSession);
+        }
+      }
 
-      // If no session exists or user navigated to a different UID parameter, set up identity
+      if (!currentSession) {
+        currentSession = loadSession(requestedUid);
+      }
+
       if (!currentSession || (requestedUid !== null && currentSession.uid !== requestedUid)) {
         const registry = await DataManager.loadIndexRegistry();
         const assignedUid = requestedUid !== null ? requestedUid : registry.counters.next_uid;
@@ -156,17 +200,31 @@
 
         saveSession(currentSession);
         isNewAccount = true;
+
+        // Commit new user profile to GitHub repository
+        const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${assignedUid}.json`;
+        await DataManager.commitGitHubFile(
+          userFilePath,
+          currentSession,
+          `Create new user profile #${assignedUid}`
+        );
+
+        // Update central registry next_uid counter on GitHub
+        registry.counters.next_uid = assignedUid + 1;
+        await DataManager.commitGitHubFile(
+          APP_CONFIG.paths.indexRegistry,
+          registry,
+          `Update next_uid counter to ${assignedUid + 1}`
+        );
       }
 
-      // Ensure local AID counter exists
       if (!currentSession.nextAidCounter) {
         currentSession.nextAidCounter = 1;
       }
 
-      // Sync URL bar with current user identity
       DataManager.updateUrlParams(currentSession.uid, urlParams.aid || null);
 
-      // 3. Setup UI Handles
+      // 3. Elements
       const userBadge = document.getElementById('userBadge');
       const appsGrid = document.getElementById('appsGrid');
       const dashboardView = document.getElementById('dashboardView');
@@ -183,13 +241,55 @@
         secretKeyModal.classList.remove('hidden');
       }
 
-      // 4. Validate Requested App ID & Render View
-      function validateAndRender() {
+      // 4. GitHub Settings Modal Handling
+      const settingsModal = document.getElementById('settingsModal');
+      const openSettingsBtn = document.getElementById('openSettingsBtn');
+      const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+      const settingsForm = document.getElementById('settingsForm');
+      const githubOwnerInput = document.getElementById('githubOwnerInput');
+      const githubRepoInput = document.getElementById('githubRepoInput');
+      const githubTokenInput = document.getElementById('githubTokenInput');
+
+      const creds = DataManager.getGitHubCredentials();
+      githubOwnerInput.value = creds.owner;
+      githubRepoInput.value = creds.repo;
+      githubTokenInput.value = creds.token;
+
+      openSettingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
+      closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
+
+      settingsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const owner = githubOwnerInput.value.trim();
+        const repo = githubRepoInput.value.trim();
+        const token = githubTokenInput.value.trim();
+
+        localStorage.setItem(APP_CONFIG.storageKeys.githubOwner, owner);
+        localStorage.setItem(APP_CONFIG.storageKeys.githubRepo, repo);
+        localStorage.setItem(APP_CONFIG.storageKeys.githubToken, token);
+
+        alert('GitHub sync credentials saved locally!');
+        settingsModal.classList.add('hidden');
+        validateAndRender();
+      });
+
+      // 5. Validate Requested App Ownership
+      async function validateAndRender() {
         const params = DataManager.getUrlParams();
         const requestedAid = params.aid ? parseInt(params.aid, 10) : null;
 
         if (requestedAid !== null && !isNaN(requestedAid)) {
-          const ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
+          // Check local session or fetch app directly from GitHub
+          let ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
+
+          if (!ownedApp) {
+            const remoteApp = await DataManager.getGitHubFile(`${APP_CONFIG.paths.appsFolder}app_${requestedAid}.json`);
+            if (remoteApp.exists && remoteApp.data && parseInt(remoteApp.data.uid, 10) === currentSession.uid) {
+              ownedApp = remoteApp.data;
+              currentSession.apps.push(ownedApp);
+              saveSession(currentSession);
+            }
+          }
 
           if (!ownedApp) {
             dashboardView.classList.add('hidden');
@@ -211,7 +311,7 @@
         renderAppCards();
       }
 
-      // 5. Render App Cards Grid
+      // 6. Render Apps Grid
       function renderAppCards() {
         if (!currentSession.apps || currentSession.apps.length === 0) {
           appsGrid.innerHTML = `
@@ -237,7 +337,7 @@
 
       validateAndRender();
 
-      // 6. Header Buttons & Controls
+      // 7. Navigation Actions
       document.getElementById('homeLogoBtn').addEventListener('click', () => {
         DataManager.updateUrlParams(currentSession.uid, null);
         validateAndRender();
@@ -248,8 +348,8 @@
         validateAndRender();
       });
 
-      document.getElementById('refreshAppsBtn').addEventListener('click', () => {
-        validateAndRender();
+      document.getElementById('refreshAppsBtn').addEventListener('click', async () => {
+        await validateAndRender();
       });
 
       // Secret Key Modal Actions
@@ -267,20 +367,23 @@
         alert('Secret Key copied to clipboard!');
       });
 
-      // 7. Create App Modal Actions
+      // 8. Create App Modal Actions
       const createAppModal = document.getElementById('createAppModal');
+      const submitCreateAppBtn = document.getElementById('submitCreateAppBtn');
       document.getElementById('openCreateAppBtn').addEventListener('click', () => createAppModal.classList.remove('hidden'));
       document.getElementById('closeCreateAppBtn').addEventListener('click', () => createAppModal.classList.add('hidden'));
 
       document.getElementById('createAppForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        submitCreateAppBtn.innerText = 'Saving & Committing to GitHub...';
+        submitCreateAppBtn.disabled = true;
 
         const name = document.getElementById('appNameInput').value.trim();
         const category = document.getElementById('appCategoryInput').value;
         const description = document.getElementById('appDescInput').value.trim();
 
-        // Assign current local incremental AID counter
-        const newAid = currentSession.nextAidCounter;
+        const registry = await DataManager.loadIndexRegistry();
+        const newAid = registry.counters.next_aid || currentSession.nextAidCounter;
 
         const newApp = DataManager.createNewAppObject(
           newAid,
@@ -290,21 +393,45 @@
           description
         );
 
-        // Save app and increment local counter for next app
+        // Update local session
         currentSession.apps.push(newApp);
-        currentSession.nextAidCounter += 1;
+        currentSession.nextAidCounter = newAid + 1;
         saveSession(currentSession);
 
-        // Update URL state to point to the newly created app ID
+        // Commit individual app JSON to data/apps/app_<aid>.json
+        const appFilePath = `${APP_CONFIG.paths.appsFolder}app_${newAid}.json`;
+        await DataManager.commitGitHubFile(
+          appFilePath,
+          newApp,
+          `Create application #${newAid} (${name})`
+        );
+
+        // Commit updated user profile to data/users/user_<uid>.json
+        const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${currentSession.uid}.json`;
+        await DataManager.commitGitHubFile(
+          userFilePath,
+          currentSession,
+          `Update user #${currentSession.uid} apps index`
+        );
+
+        // Commit updated next_aid counter to data/index.json
+        registry.counters.next_aid = newAid + 1;
+        await DataManager.commitGitHubFile(
+          APP_CONFIG.paths.indexRegistry,
+          registry,
+          `Update next_aid counter to ${newAid + 1}`
+        );
+
         DataManager.updateUrlParams(currentSession.uid, newAid);
 
         document.getElementById('createAppForm').reset();
+        submitCreateAppBtn.innerText = 'Create & Commit App';
+        submitCreateAppBtn.disabled = false;
         createAppModal.classList.add('hidden');
 
         validateAndRender();
       });
 
-      // Global function to open an app
       window.openApp = (aid) => {
         DataManager.updateUrlParams(currentSession.uid, aid);
         validateAndRender();
