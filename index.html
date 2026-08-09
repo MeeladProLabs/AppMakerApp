@@ -16,8 +16,9 @@
     <div style="display: flex; gap: 0.5rem; align-items: center;">
       <button class="btn btn-secondary" id="openSettingsBtn" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">⚙️ GitHub Sync</button>
       <div class="user-badge" id="userBadge">
-        Checking User Session...
+        Not Logged In
       </div>
+      <button class="btn btn-secondary" id="logoutBtn" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; display: none;">🔑 Switch / Logout</button>
     </div>
   </header>
 
@@ -34,7 +35,7 @@
     </div>
 
     <!-- Dashboard Main View -->
-    <div id="dashboardView">
+    <div id="dashboardView" class="hidden">
       <div class="dashboard-actions">
         <button class="btn" id="openCreateAppBtn">+ Create New App</button>
         <button class="btn btn-secondary" id="refreshAppsBtn">🔄 Refresh Dashboard</button>
@@ -51,6 +52,35 @@
     </div>
 
   </main>
+
+  <!-- Login Modal Overlay -->
+  <div class="modal-overlay" id="loginModal">
+    <div class="modal-content">
+      <h2>🔐 Login to App Maker</h2>
+      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
+        Enter your assigned User ID and Secret Key to access your account and applications.
+      </p>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="loginUidInput">User ID</label>
+          <input type="number" id="loginUidInput" placeholder="e.g. 1" required>
+        </div>
+
+        <div class="form-group">
+          <label for="loginSecretKeyInput">Secret Key (Password)</label>
+          <input type="password" id="loginSecretKeyInput" placeholder="Enter your secret key..." required>
+        </div>
+
+        <p id="loginErrorMsg" style="color: #f87171; font-size: 0.85rem; margin-bottom: 1rem;" class="hidden"></p>
+
+        <div class="modal-actions" style="flex-direction: column; gap: 0.5rem;">
+          <button type="submit" class="btn" style="width: 100%;">Log In</button>
+          <button type="button" class="btn btn-secondary" id="createNewAccountBtn" style="width: 100%;">Create New Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- GitHub Settings Modal -->
   <div class="modal-overlay hidden" id="settingsModal">
@@ -118,12 +148,12 @@
     </div>
   </div>
 
-  <!-- New Account / Password Display Modal -->
+  <!-- Account / Password Credentials Modal -->
   <div class="modal-overlay hidden" id="secretKeyModal">
     <div class="modal-content">
       <h2 style="color: var(--success);">🔑 Account Password Credentials</h2>
       <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
-        Your account has been initialized. Below is your assigned <strong>User ID</strong> and auto-generated <strong>Secret Key (Password)</strong>.
+        Your account details are below. Save your <strong>User ID</strong> and <strong>Secret Key</strong> to log in on other browsers or sessions.
       </p>
 
       <div class="form-group">
@@ -132,13 +162,13 @@
       </div>
 
       <div class="form-group">
-        <label>Auto-Generated Secret Key (Password)</label>
+        <label>Secret Key (Password)</label>
         <textarea id="displaySecretKey" readonly style="font-family: monospace; font-size: 0.85rem; height: 70px; word-break: break-all;"></textarea>
       </div>
 
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" id="copySecretKeyBtn">📋 Copy Secret Key</button>
-        <button type="button" class="btn" id="closeSecretKeyBtn">I Have Saved It</button>
+        <button type="button" class="btn" id="closeSecretKeyBtn">Close</button>
       </div>
     </div>
   </div>
@@ -152,21 +182,140 @@
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       let currentSession = null;
-      let isNewAccount = false;
 
-      // 1. Parse URL Parameters (Normalized to Numbers)
+      // UI Element Handles
+      const loginModal = document.getElementById('loginModal');
+      const loginForm = document.getElementById('loginForm');
+      const loginUidInput = document.getElementById('loginUidInput');
+      const loginSecretKeyInput = document.getElementById('loginSecretKeyInput');
+      const loginErrorMsg = document.getElementById('loginErrorMsg');
+      const createNewAccountBtn = document.getElementById('createNewAccountBtn');
+      const logoutBtn = document.getElementById('logoutBtn');
+
+      const userBadge = document.getElementById('userBadge');
+      const appsGrid = document.getElementById('appsGrid');
+      const dashboardView = document.getElementById('dashboardView');
+      const appNotFoundError = document.getElementById('appNotFoundError');
+      const appNotFoundMessage = document.getElementById('appNotFoundMessage');
+
+      const secretKeyModal = document.getElementById('secretKeyModal');
+      const displayUid = document.getElementById('displayUid');
+      const displaySecretKey = document.getElementById('displaySecretKey');
+
+      // Check URL parameters
       const urlParams = DataManager.getUrlParams();
-      const requestedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : null;
-      const requestedAid = urlParams.aid ? parseInt(urlParams.aid, 10) : null;
+      const urlUid = urlParams.uid ? parseInt(urlParams.uid, 10) : null;
 
-      // 2. Local Session Helpers
-      function loadSession(uid) {
-        if (uid !== null && !isNaN(uid)) {
-          const specific = localStorage.getItem(`${APP_CONFIG.storageKeys.userSession}_${uid}`);
-          if (specific) return JSON.parse(specific);
+      if (urlUid) {
+        loginUidInput.value = urlUid;
+      }
+
+      // Check if session is already saved in LocalStorage
+      const activeSessionRaw = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
+      if (activeSessionRaw) {
+        const parsed = JSON.parse(activeSessionRaw);
+        if (!urlUid || parsed.uid === urlUid) {
+          currentSession = parsed;
+          loginModal.classList.add('hidden');
+          logoutBtn.style.display = 'inline-block';
+          await validateAndRender();
         }
-        const fallback = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
-        return fallback ? JSON.parse(fallback) : null;
+      }
+
+      // Handle Login Form Submission
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        loginErrorMsg.classList.add('hidden');
+
+        const inputUid = parseInt(loginUidInput.value.trim(), 10);
+        const inputKey = loginSecretKeyInput.value.trim();
+
+        if (isNaN(inputUid) || !inputKey) {
+          showLoginError('Please enter a valid User ID and Secret Key.');
+          return;
+        }
+
+        // 1. Check local storage for session
+        let foundSession = localStorage.getItem(`${APP_CONFIG.storageKeys.userSession}_${inputUid}`);
+        let userObj = foundSession ? JSON.parse(foundSession) : null;
+
+        // 2. Fetch from GitHub repository if not cached locally
+        if (!userObj) {
+          const remoteUser = await DataManager.getGitHubFile(`${APP_CONFIG.paths.usersFolder}user_${inputUid}.json`);
+          if (remoteUser.exists && remoteUser.data) {
+            userObj = remoteUser.data;
+          }
+        }
+
+        // 3. Verify Secret Key Credentials
+        if (userObj && userObj.secretKey === inputKey) {
+          currentSession = userObj;
+          saveSession(currentSession);
+          loginModal.classList.add('hidden');
+          logoutBtn.style.display = 'inline-block';
+          loginForm.reset();
+          await validateAndRender();
+        } else {
+          showLoginError('Invalid User ID or Secret Key.');
+        }
+      });
+
+      // Handle Account Creation
+      createNewAccountBtn.addEventListener('click', async () => {
+        loginErrorMsg.classList.add('hidden');
+
+        const registry = await DataManager.loadIndexRegistry();
+        const assignedUid = parseInt(registry.counters.next_uid, 10) || 1;
+
+        const identity = await AppAuth.createNewUserIdentity(assignedUid);
+        currentSession = {
+          uid: assignedUid,
+          secretKey: identity.secretKey,
+          apps: [],
+          nextAidCounter: parseInt(registry.counters.next_aid, 10) || 1
+        };
+
+        saveSession(currentSession);
+
+        // Commit profile to GitHub
+        await DataManager.commitGitHubFile(
+          `${APP_CONFIG.paths.usersFolder}user_${assignedUid}.json`,
+          currentSession,
+          `Create new user profile #${assignedUid}`
+        );
+
+        // Update registry
+        registry.counters.next_uid = assignedUid + 1;
+        await DataManager.commitGitHubFile(
+          APP_CONFIG.paths.indexRegistry,
+          registry,
+          `Update next_uid counter to ${assignedUid + 1}`
+        );
+
+        loginModal.classList.add('hidden');
+        logoutBtn.style.display = 'inline-block';
+
+        displayUid.value = `#${currentSession.uid}`;
+        displaySecretKey.value = currentSession.secretKey;
+        secretKeyModal.classList.remove('hidden');
+
+        await validateAndRender();
+      });
+
+      // Logout / Switch Account Handler
+      logoutBtn.addEventListener('click', () => {
+        currentSession = null;
+        localStorage.removeItem(APP_CONFIG.storageKeys.userSession);
+        dashboardView.classList.add('hidden');
+        appNotFoundError.classList.add('hidden');
+        userBadge.innerHTML = 'Not Logged In';
+        logoutBtn.style.display = 'none';
+        loginModal.classList.remove('hidden');
+      });
+
+      function showLoginError(msg) {
+        loginErrorMsg.innerText = msg;
+        loginErrorMsg.classList.remove('hidden');
       }
 
       function saveSession(session) {
@@ -174,116 +323,20 @@
         localStorage.setItem(`${APP_CONFIG.storageKeys.userSession}_${session.uid}`, JSON.stringify(session));
       }
 
-      // Try local storage first
-      currentSession = loadSession(requestedUid);
-
-      // If missing locally, try loading remote profile from GitHub
-      if (!currentSession && requestedUid !== null && !isNaN(requestedUid)) {
-        const remoteUser = await DataManager.getGitHubFile(`${APP_CONFIG.paths.usersFolder}user_${requestedUid}.json`);
-        if (remoteUser.exists && remoteUser.data) {
-          currentSession = remoteUser.data;
-          saveSession(currentSession);
-        }
-      }
-
-      // If still missing or requested UID does not match current session UID (parsed as numbers)
-      if (!currentSession || (requestedUid !== null && parseInt(currentSession.uid, 10) !== requestedUid)) {
-        const registry = await DataManager.loadIndexRegistry();
-        const assignedUid = requestedUid !== null ? requestedUid : parseInt(registry.counters.next_uid, 10);
-
-        const identity = await AppAuth.createNewUserIdentity(assignedUid);
-        currentSession = {
-          uid: parseInt(identity.uid, 10),
-          secretKey: identity.secretKey,
-          apps: [],
-          nextAidCounter: parseInt(registry.counters.next_aid, 10) || 1
-        };
-
-        saveSession(currentSession);
-        isNewAccount = true;
-
-        // Commit new profile to GitHub
-        const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${assignedUid}.json`;
-        await DataManager.commitGitHubFile(
-          userFilePath,
-          currentSession,
-          `Create new user profile #${assignedUid}`
-        );
-
-        registry.counters.next_uid = assignedUid + 1;
-        await DataManager.commitGitHubFile(
-          APP_CONFIG.paths.indexRegistry,
-          registry,
-          `Update next_uid counter to ${assignedUid + 1}`
-        );
-      }
-
-      // Ensure UID and counters are numbers
-      currentSession.uid = parseInt(currentSession.uid, 10);
-      if (!currentSession.nextAidCounter) {
-        currentSession.nextAidCounter = 1;
-      }
-
-      DataManager.updateUrlParams(currentSession.uid, requestedAid);
-
-      // 3. Setup UI Handles
-      const userBadge = document.getElementById('userBadge');
-      const appsGrid = document.getElementById('appsGrid');
-      const dashboardView = document.getElementById('dashboardView');
-      const appNotFoundError = document.getElementById('appNotFoundError');
-      const appNotFoundMessage = document.getElementById('appNotFoundMessage');
-      const secretKeyModal = document.getElementById('secretKeyModal');
-      const displayUid = document.getElementById('displayUid');
-      const displaySecretKey = document.getElementById('displaySecretKey');
-
-      displayUid.value = `#${currentSession.uid}`;
-      displaySecretKey.value = currentSession.secretKey;
-
-      if (isNewAccount) {
-        secretKeyModal.classList.remove('hidden');
-      }
-
-      // 4. GitHub Settings Modal Handling
-      const settingsModal = document.getElementById('settingsModal');
-      const openSettingsBtn = document.getElementById('openSettingsBtn');
-      const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-      const settingsForm = document.getElementById('settingsForm');
-      const githubOwnerInput = document.getElementById('githubOwnerInput');
-      const githubRepoInput = document.getElementById('githubRepoInput');
-      const githubTokenInput = document.getElementById('githubTokenInput');
-
-      const creds = DataManager.getGitHubCredentials();
-      githubOwnerInput.value = creds.owner;
-      githubRepoInput.value = creds.repo;
-      githubTokenInput.value = creds.token;
-
-      openSettingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-      closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
-
-      settingsForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const owner = githubOwnerInput.value.trim();
-        const repo = githubRepoInput.value.trim();
-        const token = githubTokenInput.value.trim();
-
-        localStorage.setItem(APP_CONFIG.storageKeys.githubOwner, owner);
-        localStorage.setItem(APP_CONFIG.storageKeys.githubRepo, repo);
-        localStorage.setItem(APP_CONFIG.storageKeys.githubToken, token);
-
-        alert('GitHub sync credentials saved locally!');
-        settingsModal.classList.add('hidden');
-        await validateAndRender();
-      });
-
-      // 5. Validate Requested App Ownership
+      // Validate Requested App Ownership
       async function validateAndRender() {
+        if (!currentSession) return;
+
         const params = DataManager.getUrlParams();
         const aid = params.aid ? parseInt(params.aid, 10) : null;
+
+        DataManager.updateUrlParams(currentSession.uid, aid);
+        displayUid.value = `#${currentSession.uid}`;
+        displaySecretKey.value = currentSession.secretKey;
 
         if (aid !== null && !isNaN(aid)) {
           let ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === aid);
 
-          // If not in local session array, try fetching from GitHub
           if (!ownedApp) {
             const remoteApp = await DataManager.getGitHubFile(`${APP_CONFIG.paths.appsFolder}app_${aid}.json`);
             if (remoteApp.exists && remoteApp.data && parseInt(remoteApp.data.uid, 10) === currentSession.uid) {
@@ -313,9 +366,8 @@
         renderAppCards();
       }
 
-      // 6. Render Apps Grid
       function renderAppCards() {
-        if (!currentSession.apps || currentSession.apps.length === 0) {
+        if (!currentSession || !currentSession.apps || currentSession.apps.length === 0) {
           appsGrid.innerHTML = `
             <div style="grid-column: 1 / -1; padding: 2rem; background-color: var(--bg-secondary); border-radius: 8px; text-align: center; border: 1px dashed var(--border-color);">
               <p style="color: var(--text-secondary); margin-bottom: 1rem;">No applications created yet.</p>
@@ -337,24 +389,53 @@
         `).join('');
       }
 
-      await validateAndRender();
+      // GitHub Settings Modal Setup
+      const settingsModal = document.getElementById('settingsModal');
+      const openSettingsBtn = document.getElementById('openSettingsBtn');
+      const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+      const settingsForm = document.getElementById('settingsForm');
+      const githubOwnerInput = document.getElementById('githubOwnerInput');
+      const githubRepoInput = document.getElementById('githubRepoInput');
+      const githubTokenInput = document.getElementById('githubTokenInput');
 
-      // 7. Navigation Actions
+      const creds = DataManager.getGitHubCredentials();
+      githubOwnerInput.value = creds.owner;
+      githubRepoInput.value = creds.repo;
+      githubTokenInput.value = creds.token;
+
+      openSettingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
+      closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
+
+      settingsForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        localStorage.setItem(APP_CONFIG.storageKeys.githubOwner, githubOwnerInput.value.trim());
+        localStorage.setItem(APP_CONFIG.storageKeys.githubRepo, githubRepoInput.value.trim());
+        localStorage.setItem(APP_CONFIG.storageKeys.githubToken, githubTokenInput.value.trim());
+
+        alert('GitHub sync credentials saved!');
+        settingsModal.classList.add('hidden');
+        if (currentSession) validateAndRender();
+      });
+
+      // Navigation Actions
       document.getElementById('homeLogoBtn').addEventListener('click', () => {
-        DataManager.updateUrlParams(currentSession.uid, null);
-        validateAndRender();
+        if (currentSession) {
+          DataManager.updateUrlParams(currentSession.uid, null);
+          validateAndRender();
+        }
       });
 
       document.getElementById('returnDashboardBtn').addEventListener('click', () => {
-        DataManager.updateUrlParams(currentSession.uid, null);
-        validateAndRender();
+        if (currentSession) {
+          DataManager.updateUrlParams(currentSession.uid, null);
+          validateAndRender();
+        }
       });
 
       document.getElementById('refreshAppsBtn').addEventListener('click', async () => {
-        await validateAndRender();
+        if (currentSession) await validateAndRender();
       });
 
-      // Secret Key Modal Actions
       document.getElementById('viewSecretKeyBtn').addEventListener('click', () => {
         secretKeyModal.classList.remove('hidden');
       });
@@ -369,7 +450,7 @@
         alert('Secret Key copied to clipboard!');
       });
 
-      // 8. Create App Modal Actions
+      // Create App Modal Setup
       const createAppModal = document.getElementById('createAppModal');
       const submitCreateAppBtn = document.getElementById('submitCreateAppBtn');
       document.getElementById('openCreateAppBtn').addEventListener('click', () => createAppModal.classList.remove('hidden'));
@@ -385,7 +466,7 @@
         const description = document.getElementById('appDescInput').value.trim();
 
         const registry = await DataManager.loadIndexRegistry();
-        const newAid = parseInt(registry.counters.next_aid, 10) || currentSession.nextAidCounter;
+        const newAid = parseInt(registry.counters.next_aid, 10) || currentSession.nextAidCounter || 1;
 
         const newApp = DataManager.createNewAppObject(
           newAid,
@@ -399,16 +480,14 @@
         currentSession.nextAidCounter = newAid + 1;
         saveSession(currentSession);
 
-        const appFilePath = `${APP_CONFIG.paths.paths ? APP_CONFIG.paths.appsFolder : 'data/apps/'}app_${newAid}.json`;
         await DataManager.commitGitHubFile(
-          appFilePath,
+          `${APP_CONFIG.paths.appsFolder}app_${newAid}.json`,
           newApp,
           `Create application #${newAid} (${name})`
         );
 
-        const userFilePath = `${APP_CONFIG.paths.paths ? APP_CONFIG.paths.usersFolder : 'data/users/'}user_${currentSession.uid}.json`;
         await DataManager.commitGitHubFile(
-          userFilePath,
+          `${APP_CONFIG.paths.usersFolder}user_${currentSession.uid}.json`,
           currentSession,
           `Update user #${currentSession.uid} apps index`
         );
@@ -431,8 +510,10 @@
       });
 
       window.openApp = (aid) => {
-        DataManager.updateUrlParams(currentSession.uid, aid);
-        validateAndRender();
+        if (currentSession) {
+          DataManager.updateUrlParams(currentSession.uid, aid);
+          validateAndRender();
+        }
       };
     });
   </script>
