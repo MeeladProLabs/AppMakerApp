@@ -10,7 +10,7 @@
 
   <!-- Top Navigation Header -->
   <header class="top-header">
-    <div class="logo-area">
+    <div class="logo-area" style="cursor: pointer;" id="homeLogoBtn">
       <h1>🚀 App Maker</h1>
     </div>
     <div class="user-badge" id="userBadge">
@@ -20,18 +20,33 @@
 
   <!-- Main Container -->
   <main class="main-container">
-    <div class="dashboard-actions">
-      <button class="btn" id="openCreateAppBtn">+ Create New App</button>
-      <button class="btn btn-secondary" id="refreshAppsBtn">🔄 Refresh Dashboard</button>
+
+    <!-- Error View: App Not Found / Access Denied -->
+    <div id="appNotFoundError" class="hidden" style="background-color: #451a1a; border: 1px solid #f87171; border-radius: 8px; padding: 2rem; margin-bottom: 2rem; text-align: center;">
+      <h2 style="color: #f87171; margin-bottom: 0.5rem;">⚠️ App Not Found</h2>
+      <p id="appNotFoundMessage" style="color: #fca5a5; margin-bottom: 1.5rem;">
+        The requested application does not exist or you do not have permission to access it.
+      </p>
+      <button class="btn" id="returnDashboardBtn">Return to Dashboard</button>
     </div>
 
-    <!-- Apps Display Grid -->
-    <section>
-      <h2 style="margin-bottom: 1rem;">Your Applications</h2>
-      <div class="apps-grid" id="appsGrid">
-        <p style="color: var(--text-secondary);">Loading applications...</p>
+    <!-- Dashboard Main View -->
+    <div id="dashboardView">
+      <div class="dashboard-actions">
+        <button class="btn" id="openCreateAppBtn">+ Create New App</button>
+        <button class="btn btn-secondary" id="refreshAppsBtn">🔄 Refresh Dashboard</button>
+        <button class="btn btn-secondary" id="viewSecretKeyBtn">🔑 View Secret Key</button>
       </div>
-    </section>
+
+      <!-- Apps Display Grid -->
+      <section>
+        <h2 style="margin-bottom: 1rem;">Your Applications</h2>
+        <div class="apps-grid" id="appsGrid">
+          <p style="color: var(--text-secondary);">Loading applications...</p>
+        </div>
+      </section>
+    </div>
+
   </main>
 
   <!-- Create App Modal Popup -->
@@ -69,6 +84,31 @@
     </div>
   </div>
 
+  <!-- New Account / Password Display Modal -->
+  <div class="modal-overlay hidden" id="secretKeyModal">
+    <div class="modal-content">
+      <h2 style="color: var(--success);">🔑 Account Password Credentials</h2>
+      <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+        Your account has been initialized. Below is your assigned <strong>User ID</strong> and auto-generated <strong>Secret Key (Password)</strong>. Store it safely to access your account in the future.
+      </p>
+
+      <div class="form-group">
+        <label>Assigned User ID</label>
+        <input type="text" id="displayUid" readonly style="font-weight: bold; color: var(--accent);">
+      </div>
+
+      <div class="form-group">
+        <label>Auto-Generated Secret Key (Password)</label>
+        <textarea id="displaySecretKey" readonly style="font-family: monospace; font-size: 0.85rem; height: 70px; word-break: break-all;"></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="copySecretKeyBtn">📋 Copy Secret Key</button>
+        <button type="button" class="btn" id="closeSecretKeyBtn">I Have Saved It</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Core Scripts -->
   <script src="js/config.js"></script>
   <script src="js/crypto-auth.js"></script>
@@ -78,17 +118,18 @@
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       let currentSession = null;
+      let isNewAccount = false;
 
-      // 1. Check URL parameters for UID and AID
+      // 1. Get URL parameters (uid & aid)
       const urlParams = DataManager.getUrlParams();
       
-      // 2. Load or restore session
+      // 2. Load or initialize user session
       const savedSession = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
       
       if (savedSession) {
         currentSession = JSON.parse(savedSession);
       } else {
-        // Fetch registry to get next UID assignment
+        // Fetch registry to get the next UID counter
         const registry = await DataManager.loadIndexRegistry();
         const assignedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : registry.counters.next_uid;
         
@@ -100,18 +141,61 @@
         };
         
         localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
+        isNewAccount = true;
       }
 
-      // Update URL parameters to match current state
-      DataManager.updateUrlParams(currentSession.uid, urlParams.aid || null);
-
-      // 3. Render Top Header Info
+      // 3. UI Elements
       const userBadge = document.getElementById('userBadge');
-      userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> ${urlParams.aid ? `| Active App: <strong>#${urlParams.aid}</strong>` : ''}`;
-
-      // 4. Render Apps List
       const appsGrid = document.getElementById('appsGrid');
-      
+      const dashboardView = document.getElementById('dashboardView');
+      const appNotFoundError = document.getElementById('appNotFoundError');
+      const appNotFoundMessage = document.getElementById('appNotFoundMessage');
+      const secretKeyModal = document.getElementById('secretKeyModal');
+      const displayUid = document.getElementById('displayUid');
+      const displaySecretKey = document.getElementById('displaySecretKey');
+
+      // Setup Password Display Modal values
+      displayUid.value = `#${currentSession.uid}`;
+      displaySecretKey.value = currentSession.secretKey;
+
+      // Show password modal automatically if this is a newly created account
+      if (isNewAccount) {
+        secretKeyModal.classList.remove('hidden');
+      }
+
+      // 4. Validate Requested App ID Ownership (if aid parameter is present)
+      function validateAndRender() {
+        const params = DataManager.getUrlParams();
+        const requestedAid = params.aid ? parseInt(params.aid, 10) : null;
+
+        if (requestedAid !== null && !isNaN(requestedAid)) {
+          // Check if current user owns an app with this aid
+          const ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
+
+          if (!ownedApp) {
+            // App does NOT exist or is NOT owned by this user
+            dashboardView.classList.add('hidden');
+            appNotFoundError.classList.remove('hidden');
+            appNotFoundMessage.innerHTML = `Application <strong>#${requestedAid}</strong> was not found in your account (#${currentSession.uid}). You do not have permission to view or edit this app.`;
+            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | <span style="color:#f87171;">App #${requestedAid} (Not Found)</span>`;
+            return;
+          } else {
+            // User owns the app
+            appNotFoundError.classList.add('hidden');
+            dashboardView.classList.remove('hidden');
+            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${requestedAid}</strong> (${ownedApp.appName})`;
+          }
+        } else {
+          // No app requested, show default dashboard
+          appNotFoundError.classList.add('hidden');
+          dashboardView.classList.remove('hidden');
+          userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong>`;
+        }
+
+        renderAppCards();
+      }
+
+      // 5. Render Apps Grid
       function renderAppCards() {
         if (!currentSession.apps || currentSession.apps.length === 0) {
           appsGrid.innerHTML = `
@@ -135,24 +219,45 @@
         `).join('');
       }
 
-      renderAppCards();
+      // Run initial check
+      validateAndRender();
 
-      // 5. Modal Event Listeners
+      // 6. Navigation Event Handlers
+      document.getElementById('homeLogoBtn').addEventListener('click', () => {
+        DataManager.updateUrlParams(currentSession.uid, null);
+        validateAndRender();
+      });
+
+      document.getElementById('returnDashboardBtn').addEventListener('click', () => {
+        DataManager.updateUrlParams(currentSession.uid, null);
+        validateAndRender();
+      });
+
+      document.getElementById('refreshAppsBtn').addEventListener('click', () => {
+        validateAndRender();
+      });
+
+      // Secret Key Modal Actions
+      document.getElementById('viewSecretKeyBtn').addEventListener('click', () => {
+        secretKeyModal.classList.remove('hidden');
+      });
+
+      document.getElementById('closeSecretKeyBtn').addEventListener('click', () => {
+        secretKeyModal.classList.add('hidden');
+      });
+
+      document.getElementById('copySecretKeyBtn').addEventListener('click', () => {
+        displaySecretKey.select();
+        navigator.clipboard.writeText(displaySecretKey.value);
+        alert('Secret Key copied to clipboard!');
+      });
+
+      // 7. Create App Modal Actions
       const createAppModal = document.getElementById('createAppModal');
-      const openCreateAppBtn = document.getElementById('openCreateAppBtn');
-      const closeCreateAppBtn = document.getElementById('closeCreateAppBtn');
-      const createAppForm = document.getElementById('createAppForm');
+      document.getElementById('openCreateAppBtn').addEventListener('click', () => createAppModal.classList.remove('hidden'));
+      document.getElementById('closeCreateAppBtn').addEventListener('click', () => createAppModal.classList.add('hidden'));
 
-      openCreateAppBtn.addEventListener('click', () => {
-        createAppModal.classList.remove('hidden');
-      });
-
-      closeCreateAppBtn.addEventListener('click', () => {
-        createAppModal.classList.add('hidden');
-      });
-
-      // 6. Handle App Creation Form Submission
-      createAppForm.addEventListener('submit', async (e) => {
+      document.getElementById('createAppForm').addEventListener('submit', async (e) => {
         e.preventDefault();
 
         const name = document.getElementById('appNameInput').value.trim();
@@ -170,26 +275,21 @@
           description
         );
 
-        // Append to current user session
         currentSession.apps.push(newApp);
         localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
 
-        // Update URL state with the newly created app ID
         DataManager.updateUrlParams(currentSession.uid, newAid);
 
-        // Reset and close modal
-        createAppForm.reset();
+        document.getElementById('createAppForm').reset();
         createAppModal.classList.add('hidden');
 
-        // Update badge and list
-        userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${newAid}</strong>`;
-        renderAppCards();
+        validateAndRender();
       });
 
-      // Global function to navigate to an existing app
+      // Global function to switch apps
       window.openApp = (aid) => {
         DataManager.updateUrlParams(currentSession.uid, aid);
-        userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${aid}</strong>`;
+        validateAndRender();
       };
     });
   </script>
