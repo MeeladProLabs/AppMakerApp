@@ -279,7 +279,6 @@
         const requestedAid = params.aid ? parseInt(params.aid, 10) : null;
 
         if (requestedAid !== null && !isNaN(requestedAid)) {
-          // Check local session or fetch app directly from GitHub
           let ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
 
           if (!ownedApp) {
@@ -393,12 +392,10 @@
           description
         );
 
-        // Update local session
         currentSession.apps.push(newApp);
         currentSession.nextAidCounter = newAid + 1;
         saveSession(currentSession);
 
-        // Commit individual app JSON to data/apps/app_<aid>.json
         const appFilePath = `${APP_CONFIG.paths.appsFolder}app_${newAid}.json`;
         await DataManager.commitGitHubFile(
           appFilePath,
@@ -406,7 +403,6 @@
           `Create application #${newAid} (${name})`
         );
 
-        // Commit updated user profile to data/users/user_<uid>.json
         const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${currentSession.uid}.json`;
         await DataManager.commitGitHubFile(
           userFilePath,
@@ -414,7 +410,6 @@
           `Update user #${currentSession.uid} apps index`
         );
 
-        // Commit updated next_aid counter to data/index.json
         registry.counters.next_aid = newAid + 1;
         await DataManager.commitGitHubFile(
           APP_CONFIG.paths.indexRegistry,
