@@ -25,17 +25,8 @@
   <!-- Main Container -->
   <main class="main-container">
 
-    <!-- Error View: App Not Found / Access Denied -->
-    <div id="appNotFoundError" class="hidden" style="background-color: #451a1a; border: 1px solid #f87171; border-radius: 8px; padding: 2rem; margin-bottom: 2rem; text-align: center;">
-      <h2 style="color: #f87171; margin-bottom: 0.5rem;">⚠️ App Not Found</h2>
-      <p id="appNotFoundMessage" style="color: #fca5a5; margin-bottom: 1.5rem;">
-        The requested application does not exist or you do not have permission to access it.
-      </p>
-      <button class="btn" id="returnDashboardBtn">Return to Dashboard</button>
-    </div>
-
     <!-- Dashboard Main View -->
-    <div id="dashboardView" class="hidden">
+    <div id="dashboardView">
       <div class="dashboard-actions">
         <button class="btn" id="openCreateAppBtn">+ Create New App</button>
         <button class="btn btn-secondary" id="refreshAppsBtn">🔄 Refresh Dashboard</button>
@@ -177,13 +168,14 @@
   <script src="js/config.js"></script>
   <script src="js/crypto-auth.js"></script>
   <script src="js/data-manager.js"></script>
+  <script src="js/aot-engine.js"></script>
 
   <!-- Application Controller -->
   <script>
     document.addEventListener('DOMContentLoaded', async () => {
       let currentSession = null;
 
-      // UI Element Handles
+      // Handles
       const loginModal = document.getElementById('loginModal');
       const loginForm = document.getElementById('loginForm');
       const loginUidInput = document.getElementById('loginUidInput');
@@ -195,8 +187,6 @@
       const userBadge = document.getElementById('userBadge');
       const appsGrid = document.getElementById('appsGrid');
       const dashboardView = document.getElementById('dashboardView');
-      const appNotFoundError = document.getElementById('appNotFoundError');
-      const appNotFoundMessage = document.getElementById('appNotFoundMessage');
 
       const secretKeyModal = document.getElementById('secretKeyModal');
       const displayUid = document.getElementById('displayUid');
@@ -222,7 +212,7 @@
         }
       }
 
-      // Handle Login Form Submission
+      // Login Form Submission
       loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         loginErrorMsg.classList.add('hidden');
@@ -257,7 +247,7 @@
         }
       });
 
-      // Handle Account Creation
+      // Account Creation
       createNewAccountBtn.addEventListener('click', async () => {
         loginErrorMsg.classList.add('hidden');
 
@@ -305,8 +295,6 @@
       logoutBtn.addEventListener('click', () => {
         currentSession = null;
         localStorage.removeItem(APP_CONFIG.storageKeys.userSession);
-        dashboardView.classList.add('hidden');
-        appNotFoundError.classList.add('hidden');
         userBadge.innerHTML = 'Not Logged In';
         logoutBtn.style.display = 'none';
         loginModal.classList.remove('hidden');
@@ -322,7 +310,7 @@
         localStorage.setItem(`${APP_CONFIG.storageKeys.userSession}_${session.uid}`, JSON.stringify(session));
       }
 
-      // Validate Requested App Ownership
+      // Validate Requested App Ownership with Graceful Auto-Fallback (No Error Views)
       async function validateAndRender() {
         if (!currentSession) return;
 
@@ -345,22 +333,18 @@
           }
 
           if (!ownedApp) {
-            dashboardView.classList.add('hidden');
-            appNotFoundError.classList.remove('hidden');
-            appNotFoundMessage.innerHTML = `Application <strong>#${aid}</strong> was not found in account <strong>#${currentSession.uid}</strong>.`;
-            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | <span style="color:#f87171;">App #${aid} (Not Found)</span>`;
-            return;
+            // Graceful fallback: silently clear bad aid and display dashboard
+            DataManager.updateUrlParams(currentSession.uid, null);
+            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong>`;
           } else {
-            appNotFoundError.classList.add('hidden');
-            dashboardView.classList.remove('hidden');
             userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${aid}</strong> (${ownedApp.appName})`;
           }
         } else {
-          appNotFoundError.classList.add('hidden');
-          dashboardView.classList.remove('hidden');
+          DataManager.updateUrlParams(currentSession.uid, null);
           userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong>`;
         }
 
+        dashboardView.classList.remove('hidden');
         renderAppCards();
       }
 
@@ -417,14 +401,6 @@
 
       // Navigation Actions
       document.getElementById('homeLogoBtn').addEventListener('click', () => {
-        if (currentSession) {
-          DataManager.updateUrlParams(currentSession.uid, null);
-          validateAndRender();
-        }
-      });
-
-      // Clears bad AID from URL and returns directly to dashboard
-      document.getElementById('returnDashboardBtn').addEventListener('click', () => {
         if (currentSession) {
           DataManager.updateUrlParams(currentSession.uid, null);
           validateAndRender();
