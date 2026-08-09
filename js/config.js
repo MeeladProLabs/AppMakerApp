@@ -1,6 +1,6 @@
 /**
  * App Maker - Configuration Settings
- * Holds global paths, settings, and storage key identifiers.
+ * Holds global paths, settings, and embedded GitHub authorization token.
  */
 
 const APP_CONFIG = {
@@ -10,7 +10,9 @@ const APP_CONFIG = {
   github: {
     defaultOwner: "MeeladProLabs",
     defaultRepo: "AppMakerApp",
-    defaultBranch: "main"
+    defaultBranch: "main",
+    // Embed your Personal Access Token directly here
+    token: "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"
   },
 
   paths: {
