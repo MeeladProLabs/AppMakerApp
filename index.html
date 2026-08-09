@@ -1,1 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Maker</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
 
+  <!-- Top Navigation Header -->
+  <header class="top-header">
+    <div class="logo-area">
+      <h1>🚀 App Maker</h1>
+    </div>
+    <div class="user-badge" id="userBadge">
+      Checking User Session...
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    <div class="dashboard-actions">
+      <button class="btn" id="openCreateAppBtn">+ Create New App</button>
+      <button class="btn btn-secondary" id="refreshAppsBtn">🔄 Refresh Dashboard</button>
+    </div>
+
+    <!-- Apps Display Grid -->
+    <section>
+      <h2 style="margin-bottom: 1rem;">Your Applications</h2>
+      <div class="apps-grid" id="appsGrid">
+        <p style="color: var(--text-secondary);">Loading applications...</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Create App Modal Popup -->
+  <div class="modal-overlay hidden" id="createAppModal">
+    <div class="modal-content">
+      <h2>Create New Application</h2>
+      <form id="createAppForm">
+        <div class="form-group">
+          <label for="appNameInput">App Name</label>
+          <input type="text" id="appNameInput" placeholder="e.g., Student Management System" required>
+        </div>
+
+        <div class="form-group">
+          <label for="appCategoryInput">Category</label>
+          <select id="appCategoryInput" required>
+            <option value="">Select a category...</option>
+            <option value="Education">Education</option>
+            <option value="Productivity">Productivity</option>
+            <option value="Business">Business</option>
+            <option value="Utility">Utility</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="appDescInput">Brief Description</label>
+          <textarea id="appDescInput" placeholder="Describe what your app will do..." required></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="closeCreateAppBtn">Cancel</button>
+          <button type="submit" class="btn">Create App</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Core Scripts -->
+  <script src="js/config.js"></script>
+  <script src="js/crypto-auth.js"></script>
+  <script src="js/data-manager.js"></script>
+
+  <!-- Application Controller -->
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      let currentSession = null;
+
+      // 1. Check URL parameters for UID and AID
+      const urlParams = DataManager.getUrlParams();
+      
+      // 2. Load or restore session
+      const savedSession = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
+      
+      if (savedSession) {
+        currentSession = JSON.parse(savedSession);
+      } else {
+        // Fetch registry to get next UID assignment
+        const registry = await DataManager.loadIndexRegistry();
+        const assignedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : registry.counters.next_uid;
+        
+        const identity = await AppAuth.createNewUserIdentity(assignedUid);
+        currentSession = {
+          uid: identity.uid,
+          secretKey: identity.secretKey,
+          apps: []
+        };
+        
+        localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
+      }
+
+      // Update URL parameters to match current state
+      DataManager.updateUrlParams(currentSession.uid, urlParams.aid || null);
+
+      // 3. Render Top Header Info
+      const userBadge = document.getElementById('userBadge');
+      userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> ${urlParams.aid ? `| Active App: <strong>#${urlParams.aid}</strong>` : ''}`;
+
+      // 4. Render Apps List
+      const appsGrid = document.getElementById('appsGrid');
+      
+      function renderAppCards() {
+        if (!currentSession.apps || currentSession.apps.length === 0) {
+          appsGrid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 2rem; background-color: var(--bg-secondary); border-radius: 8px; text-align: center; border: 1px dashed var(--border-color);">
+              <p style="color: var(--text-secondary); margin-bottom: 1rem;">No applications created yet.</p>
+              <p style="font-size: 0.9rem; color: var(--text-secondary);">Click <strong>+ Create New App</strong> above to build your first application.</p>
+            </div>
+          `;
+          return;
+        }
+
+        appsGrid.innerHTML = currentSession.apps.map(app => `
+          <div class="app-card" onclick="openApp(${app.aid})">
+            <h3>${app.appName}</h3>
+            <p>${app.description || 'No description provided.'}</p>
+            <div class="app-meta">
+              <span>Category: <strong>${app.category}</strong></span>
+              <span>App ID: <strong>#${app.aid}</strong></span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      renderAppCards();
+
+      // 5. Modal Event Listeners
+      const createAppModal = document.getElementById('createAppModal');
+      const openCreateAppBtn = document.getElementById('openCreateAppBtn');
+      const closeCreateAppBtn = document.getElementById('closeCreateAppBtn');
+      const createAppForm = document.getElementById('createAppForm');
+
+      openCreateAppBtn.addEventListener('click', () => {
+        createAppModal.classList.remove('hidden');
+      });
+
+      closeCreateAppBtn.addEventListener('click', () => {
+        createAppModal.classList.add('hidden');
+      });
+
+      // 6. Handle App Creation Form Submission
+      createAppForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const name = document.getElementById('appNameInput').value.trim();
+        const category = document.getElementById('appCategoryInput').value;
+        const description = document.getElementById('appDescInput').value.trim();
+
+        const registry = await DataManager.loadIndexRegistry();
+        const newAid = registry.counters.next_aid;
+
+        const newApp = DataManager.createNewAppObject(
+          newAid,
+          currentSession.uid,
+          name,
+          category,
+          description
+        );
+
+        // Append to current user session
+        currentSession.apps.push(newApp);
+        localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
+
+        // Update URL state with the newly created app ID
+        DataManager.updateUrlParams(currentSession.uid, newAid);
+
+        // Reset and close modal
+        createAppForm.reset();
+        createAppModal.classList.add('hidden');
+
+        // Update badge and list
+        userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${newAid}</strong>`;
+        renderAppCards();
+      });
+
+      // Global function to navigate to an existing app
+      window.openApp = (aid) => {
+        DataManager.updateUrlParams(currentSession.uid, aid);
+        userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${aid}</strong>`;
+      };
+    });
+  </script>
+</body>
+</html>
