@@ -6,23 +6,32 @@
 const APP_CONFIG = {
   appName: "App Maker",
   version: "1.0.0",
-  
-  // File pathways within the GitHub repository
-  paths: {
-    indexRegistry: "./data/index.json",
-    usersFolder: "./data/users/",
-    appsFolder: "./data/apps/"
+
+  // Repository defaults (Can be overridden in UI settings)
+  github: {
+    defaultOwner: "", // Your GitHub username (e.g. "meeladprolabs")
+    defaultRepo: "",  // Your Repository name (e.g. "AppMakerApp")
+    defaultBranch: "main"
   },
 
-  // Fallback counter defaults
+  // File pathways within the GitHub repository
+  paths: {
+    indexRegistry: "data/index.json",
+    usersFolder: "data/users/",
+    appsFolder: "data/apps/"
+  },
+
+  // Counter defaults
   defaults: {
     startUid: 1,
     startAid: 1
   },
 
-  // Browser LocalStorage keys for active user sessions
+  // LocalStorage keys
   storageKeys: {
     userSession: "appmaker_user_session",
-    activeApp: "appmaker_active_app"
+    githubToken: "appmaker_github_pat",
+    githubOwner: "appmaker_github_owner",
+    githubRepo: "appmaker_github_repo"
   }
 };
