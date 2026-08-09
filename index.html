@@ -120,31 +120,53 @@
       let currentSession = null;
       let isNewAccount = false;
 
-      // 1. Get URL parameters (uid & aid)
+      // 1. Parse URL Parameters
       const urlParams = DataManager.getUrlParams();
-      
-      // 2. Load or initialize user session
-      const savedSession = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
-      
-      if (savedSession) {
-        currentSession = JSON.parse(savedSession);
-      } else {
-        // Fetch registry to get the next UID counter
+      const requestedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : null;
+
+      // 2. Load or Initialize Session
+      function loadSession(uid) {
+        if (uid !== null && !isNaN(uid)) {
+          const specific = localStorage.getItem(`${APP_CONFIG.storageKeys.userSession}_${uid}`);
+          if (specific) return JSON.parse(specific);
+        }
+        const fallback = localStorage.getItem(APP_CONFIG.storageKeys.userSession);
+        return fallback ? JSON.parse(fallback) : null;
+      }
+
+      function saveSession(session) {
+        localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(session));
+        localStorage.setItem(`${APP_CONFIG.storageKeys.userSession}_${session.uid}`, JSON.stringify(session));
+      }
+
+      currentSession = loadSession(requestedUid);
+
+      // If no session exists or user navigated to a different UID parameter, set up identity
+      if (!currentSession || (requestedUid !== null && currentSession.uid !== requestedUid)) {
         const registry = await DataManager.loadIndexRegistry();
-        const assignedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : registry.counters.next_uid;
-        
+        const assignedUid = requestedUid !== null ? requestedUid : registry.counters.next_uid;
+
         const identity = await AppAuth.createNewUserIdentity(assignedUid);
         currentSession = {
           uid: identity.uid,
           secretKey: identity.secretKey,
-          apps: []
+          apps: [],
+          nextAidCounter: registry.counters.next_aid || 1
         };
-        
-        localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
+
+        saveSession(currentSession);
         isNewAccount = true;
       }
 
-      // 3. UI Elements
+      // Ensure local AID counter exists
+      if (!currentSession.nextAidCounter) {
+        currentSession.nextAidCounter = 1;
+      }
+
+      // Sync URL bar with current user identity
+      DataManager.updateUrlParams(currentSession.uid, urlParams.aid || null);
+
+      // 3. Setup UI Handles
       const userBadge = document.getElementById('userBadge');
       const appsGrid = document.getElementById('appsGrid');
       const dashboardView = document.getElementById('dashboardView');
@@ -154,39 +176,33 @@
       const displayUid = document.getElementById('displayUid');
       const displaySecretKey = document.getElementById('displaySecretKey');
 
-      // Setup Password Display Modal values
       displayUid.value = `#${currentSession.uid}`;
       displaySecretKey.value = currentSession.secretKey;
 
-      // Show password modal automatically if this is a newly created account
       if (isNewAccount) {
         secretKeyModal.classList.remove('hidden');
       }
 
-      // 4. Validate Requested App ID Ownership (if aid parameter is present)
+      // 4. Validate Requested App ID & Render View
       function validateAndRender() {
         const params = DataManager.getUrlParams();
         const requestedAid = params.aid ? parseInt(params.aid, 10) : null;
 
         if (requestedAid !== null && !isNaN(requestedAid)) {
-          // Check if current user owns an app with this aid
           const ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
 
           if (!ownedApp) {
-            // App does NOT exist or is NOT owned by this user
             dashboardView.classList.add('hidden');
             appNotFoundError.classList.remove('hidden');
-            appNotFoundMessage.innerHTML = `Application <strong>#${requestedAid}</strong> was not found in your account (#${currentSession.uid}). You do not have permission to view or edit this app.`;
+            appNotFoundMessage.innerHTML = `Application <strong>#${requestedAid}</strong> was not found in account <strong>#${currentSession.uid}</strong>.`;
             userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | <span style="color:#f87171;">App #${requestedAid} (Not Found)</span>`;
             return;
           } else {
-            // User owns the app
             appNotFoundError.classList.add('hidden');
             dashboardView.classList.remove('hidden');
             userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${requestedAid}</strong> (${ownedApp.appName})`;
           }
         } else {
-          // No app requested, show default dashboard
           appNotFoundError.classList.add('hidden');
           dashboardView.classList.remove('hidden');
           userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong>`;
@@ -195,7 +211,7 @@
         renderAppCards();
       }
 
-      // 5. Render Apps Grid
+      // 5. Render App Cards Grid
       function renderAppCards() {
         if (!currentSession.apps || currentSession.apps.length === 0) {
           appsGrid.innerHTML = `
@@ -219,10 +235,9 @@
         `).join('');
       }
 
-      // Run initial check
       validateAndRender();
 
-      // 6. Navigation Event Handlers
+      // 6. Header Buttons & Controls
       document.getElementById('homeLogoBtn').addEventListener('click', () => {
         DataManager.updateUrlParams(currentSession.uid, null);
         validateAndRender();
@@ -264,8 +279,8 @@
         const category = document.getElementById('appCategoryInput').value;
         const description = document.getElementById('appDescInput').value.trim();
 
-        const registry = await DataManager.loadIndexRegistry();
-        const newAid = registry.counters.next_aid;
+        // Assign current local incremental AID counter
+        const newAid = currentSession.nextAidCounter;
 
         const newApp = DataManager.createNewAppObject(
           newAid,
@@ -275,9 +290,12 @@
           description
         );
 
+        // Save app and increment local counter for next app
         currentSession.apps.push(newApp);
-        localStorage.setItem(APP_CONFIG.storageKeys.userSession, JSON.stringify(currentSession));
+        currentSession.nextAidCounter += 1;
+        saveSession(currentSession);
 
+        // Update URL state to point to the newly created app ID
         DataManager.updateUrlParams(currentSession.uid, newAid);
 
         document.getElementById('createAppForm').reset();
@@ -286,7 +304,7 @@
         validateAndRender();
       });
 
-      // Global function to switch apps
+      // Global function to open an app
       window.openApp = (aid) => {
         DataManager.updateUrlParams(currentSession.uid, aid);
         validateAndRender();
