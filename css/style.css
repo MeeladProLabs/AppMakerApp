@@ -27,7 +27,6 @@ body {
   flex-direction: column;
 }
 
-/* Header & Top Bar */
 .top-header {
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
@@ -52,7 +51,6 @@ body {
   border: 1px solid var(--border-color);
 }
 
-/* Main Container Layout */
 .main-container {
   flex: 1;
   padding: 2rem;
@@ -61,7 +59,6 @@ body {
   width: 100%;
 }
 
-/* Dashboard Cards & Grid */
 .dashboard-actions {
   display: flex;
   gap: 1rem;
@@ -132,7 +129,6 @@ body {
   padding-top: 0.75rem;
 }
 
-/* Modal Popup Window */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -145,8 +141,9 @@ body {
   align-items: center;
 }
 
-.modal-overlay.hidden {
-  display: none;
+.modal-overlay.hidden,
+.hidden {
+  display: none !important;
 }
 
 .modal-content {
