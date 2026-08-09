@@ -62,7 +62,7 @@
       <form id="settingsForm">
         <div class="form-group">
           <label for="githubOwnerInput">GitHub Username / Owner</label>
-          <input type="text" id="githubOwnerInput" placeholder="e.g. meeladprolabs" required>
+          <input type="text" id="githubOwnerInput" placeholder="e.g. MeeladProLabs" required>
         </div>
 
         <div class="form-group">
@@ -72,7 +72,7 @@
 
         <div class="form-group">
           <label for="githubTokenInput">Personal Access Token (PAT)</label>
-          <input type="password" id="githubTokenInput" placeholder="github_pat_11A..." required>
+          <input type="password" id="githubTokenInput" placeholder="ghp_..." required>
         </div>
 
         <div class="modal-actions">
@@ -154,11 +154,12 @@
       let currentSession = null;
       let isNewAccount = false;
 
-      // 1. Parse URL Parameters
+      // 1. Parse URL Parameters (Normalized to Numbers)
       const urlParams = DataManager.getUrlParams();
       const requestedUid = urlParams.uid ? parseInt(urlParams.uid, 10) : null;
+      const requestedAid = urlParams.aid ? parseInt(urlParams.aid, 10) : null;
 
-      // 2. Load or Initialize Session
+      // 2. Local Session Helpers
       function loadSession(uid) {
         if (uid !== null && !isNaN(uid)) {
           const specific = localStorage.getItem(`${APP_CONFIG.storageKeys.userSession}_${uid}`);
@@ -173,8 +174,11 @@
         localStorage.setItem(`${APP_CONFIG.storageKeys.userSession}_${session.uid}`, JSON.stringify(session));
       }
 
-      // Check if user profile file exists on GitHub
-      if (requestedUid !== null && !isNaN(requestedUid)) {
+      // Try local storage first
+      currentSession = loadSession(requestedUid);
+
+      // If missing locally, try loading remote profile from GitHub
+      if (!currentSession && requestedUid !== null && !isNaN(requestedUid)) {
         const remoteUser = await DataManager.getGitHubFile(`${APP_CONFIG.paths.usersFolder}user_${requestedUid}.json`);
         if (remoteUser.exists && remoteUser.data) {
           currentSession = remoteUser.data;
@@ -182,26 +186,23 @@
         }
       }
 
-      if (!currentSession) {
-        currentSession = loadSession(requestedUid);
-      }
-
-      if (!currentSession || (requestedUid !== null && currentSession.uid !== requestedUid)) {
+      // If still missing or requested UID does not match current session UID (parsed as numbers)
+      if (!currentSession || (requestedUid !== null && parseInt(currentSession.uid, 10) !== requestedUid)) {
         const registry = await DataManager.loadIndexRegistry();
-        const assignedUid = requestedUid !== null ? requestedUid : registry.counters.next_uid;
+        const assignedUid = requestedUid !== null ? requestedUid : parseInt(registry.counters.next_uid, 10);
 
         const identity = await AppAuth.createNewUserIdentity(assignedUid);
         currentSession = {
-          uid: identity.uid,
+          uid: parseInt(identity.uid, 10),
           secretKey: identity.secretKey,
           apps: [],
-          nextAidCounter: registry.counters.next_aid || 1
+          nextAidCounter: parseInt(registry.counters.next_aid, 10) || 1
         };
 
         saveSession(currentSession);
         isNewAccount = true;
 
-        // Commit new user profile to GitHub repository
+        // Commit new profile to GitHub
         const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${assignedUid}.json`;
         await DataManager.commitGitHubFile(
           userFilePath,
@@ -209,7 +210,6 @@
           `Create new user profile #${assignedUid}`
         );
 
-        // Update central registry next_uid counter on GitHub
         registry.counters.next_uid = assignedUid + 1;
         await DataManager.commitGitHubFile(
           APP_CONFIG.paths.indexRegistry,
@@ -218,13 +218,15 @@
         );
       }
 
+      // Ensure UID and counters are numbers
+      currentSession.uid = parseInt(currentSession.uid, 10);
       if (!currentSession.nextAidCounter) {
         currentSession.nextAidCounter = 1;
       }
 
-      DataManager.updateUrlParams(currentSession.uid, urlParams.aid || null);
+      DataManager.updateUrlParams(currentSession.uid, requestedAid);
 
-      // 3. Elements
+      // 3. Setup UI Handles
       const userBadge = document.getElementById('userBadge');
       const appsGrid = document.getElementById('appsGrid');
       const dashboardView = document.getElementById('dashboardView');
@@ -270,19 +272,20 @@
 
         alert('GitHub sync credentials saved locally!');
         settingsModal.classList.add('hidden');
-        validateAndRender();
+        await validateAndRender();
       });
 
       // 5. Validate Requested App Ownership
       async function validateAndRender() {
         const params = DataManager.getUrlParams();
-        const requestedAid = params.aid ? parseInt(params.aid, 10) : null;
+        const aid = params.aid ? parseInt(params.aid, 10) : null;
 
-        if (requestedAid !== null && !isNaN(requestedAid)) {
-          let ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === requestedAid);
+        if (aid !== null && !isNaN(aid)) {
+          let ownedApp = currentSession.apps.find(app => parseInt(app.aid, 10) === aid);
 
+          // If not in local session array, try fetching from GitHub
           if (!ownedApp) {
-            const remoteApp = await DataManager.getGitHubFile(`${APP_CONFIG.paths.appsFolder}app_${requestedAid}.json`);
+            const remoteApp = await DataManager.getGitHubFile(`${APP_CONFIG.paths.appsFolder}app_${aid}.json`);
             if (remoteApp.exists && remoteApp.data && parseInt(remoteApp.data.uid, 10) === currentSession.uid) {
               ownedApp = remoteApp.data;
               currentSession.apps.push(ownedApp);
@@ -293,13 +296,13 @@
           if (!ownedApp) {
             dashboardView.classList.add('hidden');
             appNotFoundError.classList.remove('hidden');
-            appNotFoundMessage.innerHTML = `Application <strong>#${requestedAid}</strong> was not found in account <strong>#${currentSession.uid}</strong>.`;
-            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | <span style="color:#f87171;">App #${requestedAid} (Not Found)</span>`;
+            appNotFoundMessage.innerHTML = `Application <strong>#${aid}</strong> was not found in account <strong>#${currentSession.uid}</strong>.`;
+            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | <span style="color:#f87171;">App #${aid} (Not Found)</span>`;
             return;
           } else {
             appNotFoundError.classList.add('hidden');
             dashboardView.classList.remove('hidden');
-            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${requestedAid}</strong> (${ownedApp.appName})`;
+            userBadge.innerHTML = `User ID: <strong>#${currentSession.uid}</strong> | Active App: <strong>#${aid}</strong> (${ownedApp.appName})`;
           }
         } else {
           appNotFoundError.classList.add('hidden');
@@ -334,7 +337,7 @@
         `).join('');
       }
 
-      validateAndRender();
+      await validateAndRender();
 
       // 7. Navigation Actions
       document.getElementById('homeLogoBtn').addEventListener('click', () => {
@@ -382,7 +385,7 @@
         const description = document.getElementById('appDescInput').value.trim();
 
         const registry = await DataManager.loadIndexRegistry();
-        const newAid = registry.counters.next_aid || currentSession.nextAidCounter;
+        const newAid = parseInt(registry.counters.next_aid, 10) || currentSession.nextAidCounter;
 
         const newApp = DataManager.createNewAppObject(
           newAid,
@@ -396,14 +399,14 @@
         currentSession.nextAidCounter = newAid + 1;
         saveSession(currentSession);
 
-        const appFilePath = `${APP_CONFIG.paths.appsFolder}app_${newAid}.json`;
+        const appFilePath = `${APP_CONFIG.paths.paths ? APP_CONFIG.paths.appsFolder : 'data/apps/'}app_${newAid}.json`;
         await DataManager.commitGitHubFile(
           appFilePath,
           newApp,
           `Create application #${newAid} (${name})`
         );
 
-        const userFilePath = `${APP_CONFIG.paths.usersFolder}user_${currentSession.uid}.json`;
+        const userFilePath = `${APP_CONFIG.paths.paths ? APP_CONFIG.paths.usersFolder : 'data/users/'}user_${currentSession.uid}.json`;
         await DataManager.commitGitHubFile(
           userFilePath,
           currentSession,
@@ -424,7 +427,7 @@
         submitCreateAppBtn.disabled = false;
         createAppModal.classList.add('hidden');
 
-        validateAndRender();
+        await validateAndRender();
       });
 
       window.openApp = (aid) => {
