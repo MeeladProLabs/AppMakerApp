@@ -4,30 +4,26 @@
  */
 
 const APP_CONFIG = {
-  appName: "App Maker App",
+  appName: "App Maker",
   version: "1.0.0",
 
-  // Repository defaults (Can be overridden in UI settings)
   github: {
-    defaultOwner: "", // Your GitHub username (e.g. "meeladprolabs")
-    defaultRepo: "",  // Your Repository name (e.g. "AppMakerApp")
+    defaultOwner: "MeeladProLabs",
+    defaultRepo: "AppMakerApp",
     defaultBranch: "main"
   },
 
-  // File pathways within the GitHub repository
   paths: {
     indexRegistry: "data/index.json",
     usersFolder: "data/users/",
     appsFolder: "data/apps/"
   },
 
-  // Counter defaults
   defaults: {
     startUid: 1,
     startAid: 1
   },
 
-  // LocalStorage keys
   storageKeys: {
     userSession: "appmaker_user_session",
     githubToken: "appmaker_github_pat",
