@@ -1,10 +1,37 @@
 /**
  * App Maker - Data Manager
- * Handles URL parameter parsing, LocalStorage caching, and GitHub REST API file commits.
+ * Direct GitHub REST API Integration (Contents API GET/PUT operations).
  */
 
 const DataManager = {
-  // Reads ?uid=X&aid=Y from browser address bar
+  /**
+   * Encodes a string to Base64 (UTF-8 safe)
+   */
+  utf8ToBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  },
+
+  /**
+   * Decodes a Base64 string to UTF-8 text
+   */
+  base64ToUtf8(str) {
+    const cleanStr = str.replace(/\n/g, '').replace(/\r/g, '');
+    const binary = atob(cleanStr);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  },
+
+  /**
+   * Reads URL parameters (?uid=X&aid=Y) from address bar
+   */
   getUrlParams() {
     const params = new URLSearchParams(window.location.search);
     return {
@@ -13,7 +40,9 @@ const DataManager = {
     };
   },
 
-  // Updates address bar parameters without page reload
+  /**
+   * Updates address bar parameters without page reload
+   */
   updateUrlParams(uid, aid) {
     const url = new URL(window.location);
     if (uid !== null && uid !== undefined) {
@@ -21,83 +50,152 @@ const DataManager = {
     } else {
       url.searchParams.delete('uid');
     }
-    
+
     if (aid !== null && aid !== undefined) {
       url.searchParams.set('aid', aid);
     } else {
       url.searchParams.delete('aid');
     }
-    
+
     window.history.pushState({}, '', url);
   },
 
-  // Reads the central registry index
-  async loadIndexRegistry() {
+  /**
+   * Retrieves GitHub API Credentials from LocalStorage or config defaults
+   */
+  getGitHubCredentials() {
+    return {
+      token: localStorage.getItem(APP_CONFIG.storageKeys.githubToken) || '',
+      owner: localStorage.getItem(APP_CONFIG.storageKeys.githubOwner) || APP_CONFIG.github.defaultOwner,
+      repo: localStorage.getItem(APP_CONFIG.storageKeys.githubRepo) || APP_CONFIG.github.defaultRepo
+    };
+  },
+
+  /**
+   * Performs GET request to fetch file content and current SHA hash from GitHub
+   */
+  async getGitHubFile(filePath) {
+    const { token, owner, repo } = this.getGitHubCredentials();
+    const cleanPath = filePath.replace(/^\/+/, '');
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}`;
+
+    const headers = {
+      'Accept': 'application/vnd.github.v3+json'
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     try {
-      const response = await fetch(`${APP_CONFIG.paths.indexRegistry}?t=${Date.now()}`);
-      if (!response.ok) throw new Error('Registry file not found.');
-      return await response.json();
-    } catch (error) {
-      console.warn('Using local fallback index registry:', error);
+      const response = await fetch(`${url}?t=${Date.now()}`, { headers });
+      if (response.status === 404) {
+        return { exists: false, sha: null, data: null };
+      }
+      if (!response.ok) {
+        throw new Error(`GitHub GET failed (${response.status})`);
+      }
+
+      const jsonResponse = await response.json();
+      const decodedText = this.base64ToUtf8(jsonResponse.content);
+      const parsedData = JSON.parse(decodedText);
+
       return {
-        counters: { next_uid: 1, next_aid: 1 },
-        user_app_index: []
+        exists: true,
+        sha: jsonResponse.sha,
+        data: parsedData
       };
+    } catch (error) {
+      console.warn(`Could not fetch ${cleanPath} from GitHub API:`, error);
+      return { exists: false, sha: null, data: null };
     }
   },
 
-  // Saves or commits a file directly to GitHub Repository via GitHub API
-  async commitFileToGitHub(filePath, contentObject, commitMessage, githubToken, repoOwner, repoName) {
-    if (!githubToken) {
-      console.warn('No GitHub Token provided. Data saved to browser LocalStorage only.');
+  /**
+   * Performs GET for SHA, encodes payload to Base64, and sends PUT request to commit changes
+   */
+  async commitGitHubFile(filePath, contentObject, commitMessage) {
+    const { token, owner, repo } = this.getGitHubCredentials();
+
+    if (!token || !owner || !repo) {
+      console.warn('GitHub PAT or Repository info missing. Changes saved to LocalStorage only.');
       return false;
     }
 
-    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`;
+    const cleanPath = filePath.replace(/^\/+/, '');
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}`;
+
+    // 1. GET current file to grab current SHA hash
+    const currentFile = await this.getGitHubFile(cleanPath);
+
+    // 2. Convert JSON object to formatted string, then to Base64
     const jsonString = JSON.stringify(contentObject, null, 2);
-    
-    // Convert content to base64 encoding required by GitHub API
-    const contentBase64 = btoa(unescape(encodeURIComponent(jsonString)));
+    const contentBase64 = this.utf8ToBase64(jsonString);
 
+    // 3. Prepare PUT request payload
+    const putBody = {
+      message: commitMessage,
+      content: contentBase64,
+      branch: APP_CONFIG.github.defaultBranch
+    };
+
+    if (currentFile.sha) {
+      putBody.sha = currentFile.sha;
+    }
+
+    // 4. Send PUT Request
     try {
-      // 1. Check if file already exists to get its SHA hash
-      let sha = null;
-      const getResponse = await fetch(apiUrl, {
-        headers: { 'Authorization': `token ${githubToken}` }
-      });
-      if (getResponse.ok) {
-        const fileData = await getResponse.json();
-        sha = fileData.sha;
-      }
-
-      // 2. Commit file to GitHub repository
-      const putResponse = await fetch(apiUrl, {
+      const response = await fetch(url, {
         method: 'PUT',
         headers: {
-          'Authorization': `token ${githubToken}`,
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          message: commitMessage,
-          content: contentBase64,
-          sha: sha || undefined
-        })
+        body: JSON.stringify(putBody)
       });
 
-      if (!putResponse.ok) {
-        const errData = await putResponse.json();
-        throw new Error(errData.message || 'Failed to commit to GitHub.');
+      if (!response.ok) {
+        const errJson = await response.json();
+        throw new Error(errJson.message || `GitHub PUT failed with status ${response.status}`);
       }
 
-      console.log(`Successfully saved ${filePath} to GitHub repo!`);
+      const result = await response.json();
+      console.log(`Successfully committed ${cleanPath} to GitHub!`, result);
       return true;
     } catch (error) {
-      console.error('GitHub API Commit Error:', error);
+      console.error('GitHub Commit Error:', error);
+      alert(`GitHub Commit Error: ${error.message}`);
       return false;
     }
   },
 
-  // Helper object to generate standard User data structure
+  /**
+   * Loads central registry index (data/index.json) via GitHub API or static fallback
+   */
+  async loadIndexRegistry() {
+    const result = await this.getGitHubFile(APP_CONFIG.paths.indexRegistry);
+    if (result.exists && result.data) {
+      return result.data;
+    }
+
+    try {
+      const fallbackResponse = await fetch(`${APP_CONFIG.paths.indexRegistry}?t=${Date.now()}`);
+      if (fallbackResponse.ok) {
+        return await fallbackResponse.json();
+      }
+    } catch (e) {
+      console.warn('Fallback index registry fetch failed:', e);
+    }
+
+    return {
+      counters: { next_uid: APP_CONFIG.defaults.startUid, next_aid: APP_CONFIG.defaults.startAid },
+      user_app_index: []
+    };
+  },
+
+  /**
+   * Helper object to build standard User data structure
+   */
   createNewUserProfile(uid, secretKey) {
     return {
       uid: uid,
@@ -107,7 +205,9 @@ const DataManager = {
     };
   },
 
-  // Helper object to generate standard App data structure
+  /**
+   * Helper object to build standard App data structure
+   */
   createNewAppObject(aid, uid, name, category, description) {
     return {
       aid: aid,
